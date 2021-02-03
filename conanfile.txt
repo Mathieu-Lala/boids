@@ -1,0 +1,15 @@
+[requires]
+imgui-sfml/2.1@bincrafters/stable
+entt/3.6.0
+glm/0.9.9.5@g-truc/stable
+
+# nlohmann_json/3.9.0
+# spdlog/1.6.0
+# magic_enum/0.6.6
+
+[options]
+
+[generators]
+cmake
+
+[imports]
