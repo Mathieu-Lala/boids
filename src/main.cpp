@@ -48,17 +48,12 @@ struct Orientation {
     }
 };
 
-struct Rotation {
-    float value{0};
-};
-
 struct Context {
     std::int32_t object_count{10};
     float object_size{50};
-    float velocity_scalar{1 / 1000.0f};
-    float rotation_scalar{1 / 1000.0f};
-    float contact_distance{75};
-    float close_distance{110};
+    float velocity_scalar{1.0f};
+    float contact_distance{1};
+    float close_distance{1};
 };
 
 int main()
@@ -97,10 +92,9 @@ int main()
                     std::rand() % static_cast<std::int32_t>(WINDOW_H - context.object_size * 2)});
             world.emplace<Velocity>(e);
             world.emplace<Orientation>(e, std::rand() % 360);
-            world.emplace<Rotation>(e);
         }
         context.contact_distance = context.object_size * 1.3f;
-        context.close_distance = context.close_distance * 1.3f;
+        context.close_distance = context.object_size * 3.9f;
     };
 
     create_scene();
@@ -120,81 +114,48 @@ int main()
             }
         }
 
-        // return -1, 0 or 1
-        // const auto get_rand_value = []() { return static_cast<float>(std::rand() % 3 - 1); };
-
-        //        // update randomly the velocity
-        //        // should use patch
-        //        world.view<Velocity>().each([&get_rand_value, &et_as_ms, &context](auto &vel) {
-        //            vel.vec += glm::vec2{
-        //                get_rand_value() * et_as_ms * context.velocity_scalar,
-        //                get_rand_value() * et_as_ms * context.velocity_scalar};
-        //        });
-
-        // // update randomly the rotation
-        // // should use patch
-        // world.view<Rotation>().each([&get_rand_value, &et_as_ms, &context](auto &rot) {
-        //     rot.value += get_rand_value() * et_as_ms * context.rotation_scalar;
-        // });
-
-
         // apply the velocity to the position
         {
             const auto view = world.view<Position, Velocity>();
             for (const auto &e : view) {
                 const auto &vel = view.get<Velocity>(e);
-
-                world.patch<Position>(e, [&vel](auto &pos) { pos.vec += vel.vec; });
+                world.patch<Position>(
+                    e, [&vel, &context](auto &pos) { pos.vec += vel.vec * context.velocity_scalar; });
             }
         }
-
-        // apply rotation to the orientation
-        {
-            const auto view = world.view<Orientation, Rotation>();
-            for (const auto &e : view) {
-                const auto &rot = view.get<Rotation>(e);
-
-                world.patch<Orientation>(e, [&rot](auto &ori) { ori.value += rot.value; });
-            }
-        }
-
 
         // apply the orientation to the velocity
         world.view<Velocity, Orientation>().each([](auto &vel, auto &rot) {
             vel.vec = {std::cos(glm::radians(rot.value)), std::sin(glm::radians(rot.value))};
         });
 
-
-        const auto angle = [](const glm::vec2 &v1, const glm::vec2 &v2) {
-            const auto dot = v1.x * v2.x + v1.y * v2.y;
-            const auto det = v1.x * v2.y - v1.y * v2.x;
-            return std::atan2(det, dot);
-        };
-
-        // clamp position to border
+        // make the object traverse the border
         {
             for (const auto &e : world.view<Position>()) {
                 const auto &obj_pos = world.get<Position>(e);
                 const auto LIMIT_LEFT = context.object_size;
                 const auto LIMIT_RIGHT = WINDOW_W - context.object_size;
-                if (obj_pos.vec.x <= LIMIT_LEFT || obj_pos.vec.x >= LIMIT_RIGHT) {
-                    world.patch<Position>(e, [&LIMIT_LEFT, &LIMIT_RIGHT](auto &pos) {
-                        pos.vec.x = std::clamp(pos.vec.x, LIMIT_LEFT, LIMIT_RIGHT);
-                    });
-                    // this is bugged
-                    world.patch<Orientation>(e, [&obj_pos, &angle](auto &ori) {
-                        ori.value = glm::degrees(angle(obj_pos.vec, {WINDOW_W / 2.0f, WINDOW_H / 2.0f}));
-                    });
-                }
                 const auto LIMIT_UP = context.object_size;
                 const auto LIMIT_DOWN = WINDOW_H - context.object_size;
-                if (obj_pos.vec.y <= LIMIT_UP || obj_pos.vec.y >= LIMIT_DOWN) {
-                    world.patch<Position>(e, [&LIMIT_UP, &LIMIT_DOWN](auto &pos) {
-                        pos.vec.y = std::clamp(pos.vec.y, LIMIT_UP, LIMIT_DOWN);
+
+                if (obj_pos.vec.x < LIMIT_LEFT - context.object_size * 2.0f) {
+                    world.patch<Position>(e, [&LIMIT_RIGHT, &context](auto &pos) {
+                        pos.vec.x = LIMIT_RIGHT + context.object_size * 2.0f;
                     });
-                    // this is bugged
-                    world.patch<Orientation>(e, [&obj_pos, &angle](auto &ori) {
-                        ori.value = glm::degrees(angle(obj_pos.vec, {WINDOW_W / 2.0f, WINDOW_H / 2.0f}));
+                }
+                if (obj_pos.vec.x > LIMIT_RIGHT + context.object_size * 2.0f) {
+                    world.patch<Position>(e, [&LIMIT_LEFT, &context](auto &pos) {
+                        pos.vec.x = LIMIT_LEFT - context.object_size * 2.0f;
+                    });
+                }
+                if (obj_pos.vec.y < LIMIT_UP - context.object_size * 2.0f) {
+                    world.patch<Position>(e, [&LIMIT_DOWN, &context](auto &pos) {
+                        pos.vec.y = LIMIT_DOWN + context.object_size * 2.0f;
+                    });
+                }
+                if (obj_pos.vec.y > LIMIT_DOWN + context.object_size * 2.0f) {
+                    world.patch<Position>(e, [&LIMIT_UP, &context](auto &pos) {
+                        pos.vec.y = LIMIT_UP - context.object_size * 2.0f;
                     });
                 }
             }
@@ -227,8 +188,53 @@ int main()
             }
         }
 
+        const auto get_angle = [](const glm::vec2 &a, const glm::vec2 &b, const glm::vec2 origin) {
+            const auto da = glm::normalize(a - origin);
+            const auto db = glm::normalize(b - origin);
+            return glm::acos(glm::dot(da, db));
+        };
+
+        const auto get_is_on_right = [](const glm::vec2 &a, const glm::vec2 &b, const glm::vec2 &dir) {
+            const auto direction = glm::normalize(dir);
+            const auto right =
+                glm::cross(glm::vec3{direction.x, direction.y, 1.0f}, glm::vec3{1.0f, 0.0f, 1.0f});
+
+            const auto other = a - b;
+
+            const auto dot = glm::dot(right, glm::vec3{other.x, other.y, 1.0});
+            return dot < 0;
+        };
+
+        // avoid collision
+        {
+            const auto view = world.view<Position, Velocity, Orientation>();
+            for (const auto &ii : view) {
+                const auto &pos_ii = world.get<Position>(ii);
+                const auto &vel_ii = world.get<Velocity>(ii);
+
+                for (const auto &i : view) {
+                    if (i == ii) continue;
+
+                    const auto &pos_i = world.get<Position>(i);
+                    const auto distance = glm::distance(pos_i.vec, pos_ii.vec);
+
+                    if (distance <= context.close_distance) {
+                        const auto angle = glm::degrees(
+                            get_angle(pos_ii.vec + glm::normalize(vel_ii.vec), pos_i.vec, pos_ii.vec));
+                        const auto is_on_right = get_is_on_right(pos_ii.vec, pos_i.vec, vel_ii.vec);
+
+                        world.patch<Orientation>(i, [&angle, &is_on_right](auto &rot) {
+                            rot.value += angle / 100.0f * (is_on_right ? 1 : -1);
+                        });
+                    }
+                }
+            }
+        }
+
+        /*
         // update the rotation depending of the close boids
         {
+            std::unordered_map<entt::entity, float> new_rot;
             const auto view = world.view<Rotation, Position>();
             for (const auto &ii : view) {
                 const auto &rot_ii = world.get<Rotation>(ii);
@@ -250,9 +256,13 @@ int main()
                     rot_sum += rot_i.value;
                 }
 
-                world.patch<Rotation>(ii, [average = rot_sum / rot_count](auto &ori) { ori.value = average; });
+                new_rot[ii] = rot_sum / rot_count;
+            }
+            for (const auto &i : view) {
+                world.patch<Rotation>(i, [value = new_rot[i]](auto &rot) { rot.value = value; });
             }
         }
+        */
 
 
         ImGui::SFML::Update(window, elapsedTime);
@@ -262,9 +272,7 @@ int main()
         if (ImGui::DragInt("Object Count", &context.object_count, 1.0f, 1.0f, 300.0f)) { create_scene(); }
         ImGui::Separator();
         ImGui::DragFloat(
-            "Velocity scalar", &context.velocity_scalar, 1.0f / 10000.0f, 1.0f / 10000.0f, 1.0f / 10.0f, "%.4f");
-        ImGui::DragFloat(
-            "Rotation scalar", &context.rotation_scalar, 1.0f / 10000.0f, 1.0f / 10000.0f, 1.0f / 10.0f, "%.4f");
+            "Velocity scalar", &context.velocity_scalar, 1.0f / 10.0f, 1.0f / 10.0f, 10.0f, "%.4f", ImGuiSliderFlags_Logarithmic);
         ImGui::Separator();
         ImGui::DragFloat("Close Distance", &context.close_distance, 1.0f, context.contact_distance, 1000.0f);
         ImGui::DragFloat("Contact Distance", &context.contact_distance, 1.0f, 0.0f, context.close_distance);
